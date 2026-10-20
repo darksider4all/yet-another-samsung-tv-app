@@ -63,7 +63,7 @@
 // on any setup. Return backgrounds it (telemetry keeps running); RED opens Setup.
 // ---------------------------------------------------------------------------
 var BASE = (function(){ try { return localStorage.getItem("yas_bridge") || ""; } catch(e){ return ""; } })();
-var seq = 0, startedAt = Date.now(), sys = null, net = null, _started = false, _setup = false;
+var seq = 0, startedAt = Date.now(), sys = null, net = null, _started = false, _setup = false, _contentUntil = 0;
 var SCREEN_HTML = (document.getElementById("screen") || {}).outerHTML || "";
 
 // ---- lights dashboard ------------------------------------------------------
@@ -112,7 +112,7 @@ function dashKey(code){
 }
 function startPoll(){ stopPoll(); _pollTimer=setInterval(loadLights, 5000); }
 function stopPoll(){ if(_pollTimer){ clearInterval(_pollTimer); _pollTimer=null; } }
-function showDashboard(){ _setup=false; try{ document.body.innerHTML = SCREEN_HTML; }catch(e){} renderLights(); loadLights(); startPoll(); }
+function showDashboard(){ _setup=false; _contentUntil=0; try{ document.body.innerHTML = SCREEN_HTML; }catch(e){} renderLights(); loadLights(); startPoll(); }
 
 // ---- setup screen (runtime bridge config) ----------------------------------
 function setupStatus(msg){ var el=document.getElementById("bstat"); if(el) el.textContent=msg; }
@@ -272,10 +272,14 @@ function showContent(t){
       + '<div style="font-size:72px;font-weight:800;line-height:1.3;">' + escapeHtml((t&&t.message)||"") + '</div></div>';
   }
   if(!dur || dur<1) dur=10;
+  // Guard the toast against the app's own lifecycle: a second visibilitychange
+  // (or a re-entry through onForeground) used to call showDashboard() a second
+  // later and wipe the message off the screen before anyone could read it.
+  _contentUntil = Date.now() + dur*1000 + 1000;
   setTimeout(endContent, dur*1000);
   if(!_started) startNormal();
 }
-function endContent(){ hideApp(); try{ document.body.innerHTML = SCREEN_HTML; }catch(e){} }
+function endContent(){ _contentUntil=0; hideApp(); try{ document.body.innerHTML = SCREEN_HTML; }catch(e){} }
 function checkToast(cb){
   if(!BASE){ cb(null); return; }
   try{
@@ -288,6 +292,10 @@ function checkToast(cb){
 // On becoming visible: no bridge -> Setup; a queued toast/cast takes over; else dashboard.
 function onForeground(){
   if(!BASE){ showSetup(); return; }
+  // A toast/cast is on screen: leave it alone. The app gets two visibilitychange
+  // events around a relaunch, and the second one used to replace the message with
+  // the dashboard after about a second.
+  if(Date.now() < _contentUntil){ return; }
   checkToast(function(t){ if(t && (t.message||t.url)){ showContent(t); } else { showDashboard(); } });
 }
 
