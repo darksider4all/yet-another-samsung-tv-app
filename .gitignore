@@ -1,0 +1,13 @@
+# secrets / signing material — NEVER commit
+sign/cert.json
+*.p12
+*.pem
+*.key
+
+# build artifacts
+sign/node_modules/
+out/
+*.log
+
+# os
+.DS_Store

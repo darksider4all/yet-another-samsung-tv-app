@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casa</title>
+<style>
+  html, body { margin:0; height:100%; background:#0a0a12; overflow:hidden;
+    font-family:Georgia,"Times New Roman",serif; color:#f3e9d6; }
+  #screen {
+    position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:flex-start; text-align:center;
+    box-sizing:border-box; padding:7vh 3vw 0;
+    background:
+      radial-gradient(circle at 50% 20%, rgba(233,194,122,0.17), rgba(10,10,18,0) 55%),
+      linear-gradient(160deg,#141427 0%,#0b0b14 60%,#070709 100%);
+  }
+  .brand { display:flex; align-items:center; gap:28px; margin-bottom:6vh; }
+  .brand .cat { width:150px; height:auto; filter:drop-shadow(0 10px 28px rgba(233,194,122,0.32)); }
+  .brand .bt { font-size:84px; letter-spacing:3px; color:#f1dfb6; }
+  .lights { display:flex; flex-wrap:wrap; justify-content:center; gap:40px; max-width:1140px; }
+  .tile { width:320px; height:280px; border-radius:36px; background:#15151f; border:4px solid #23232f;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; transition:all .18s; }
+  .tile.sel { border-color:#e9c27a; box-shadow:0 0 54px rgba(233,194,122,0.5); transform:scale(1.05); }
+  .tile .bulb { width:104px; height:104px; border-radius:50%; background:#2a2a36; transition:all .2s; }
+  .tile.on .bulb { background:radial-gradient(circle at 35% 30%, #ffe9ad, #e9a93f);
+    box-shadow:0 0 46px rgba(233,169,63,0.85); }
+  .tile .nm { margin-top:22px; font-size:42px; color:#ededed; }
+  .tile .pct { margin-top:8px; font-size:28px; opacity:.55; }
+  .tile.unreach { opacity:.35; }
+  .hint { margin-top:6vh; font-size:30px; opacity:.4; font-family:sans-serif; }
+</style>
+</head>
+<body>
+<div id="screen">
+  <div class="brand">
+    <svg class="cat" viewBox="0 0 260 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M70 150 C 14 150 10 92 52 78" fill="none" stroke="#d9ad63" stroke-width="24" stroke-linecap="round"/>
+      <path d="M70 152 C 24 150 26 92 70 82 C 108 72 135 68 172 74 C 224 82 244 112 222 142 C 208 160 150 164 110 162 C 92 161 88 160 70 152 Z" fill="#e9c27a"/>
+      <ellipse cx="190" cy="132" rx="34" ry="24" fill="#e3b96f"/>
+      <circle cx="78" cy="118" r="38" fill="#edc981"/>
+      <path d="M50 96 L52 64 L80 90 Z" fill="#edc981"/>
+      <path d="M84 90 L104 66 L108 104 Z" fill="#edc981"/>
+      <path d="M58 90 L60 74 L74 88 Z" fill="#d79355"/>
+      <path d="M90 90 L102 76 L104 98 Z" fill="#d79355"/>
+      <path d="M60 120 q9 8 19 0" stroke="#6f4e1c" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+      <path d="M90 118 q8 7 16 0" stroke="#6f4e1c" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+      <path d="M79 130 l8 0 l-4 5 Z" fill="#c9736f"/>
+      <path d="M58 128 l-26 -5 M58 134 l-27 1 M58 140 l-25 7" stroke="#d7b26a" stroke-width="2" stroke-linecap="round"/>
+      <path d="M50 80 C 78 70 104 90 128 84" fill="none" stroke="#e9c27a" stroke-width="21" stroke-linecap="round"/>
+    </svg>
+    <div class="bt">Casa</div>
+  </div>
+  <div class="lights" id="lights"></div>
+  <div class="hint">◀ ▲ ▼ ▶ alege &nbsp;·&nbsp; OK aprinde / stinge &nbsp;·&nbsp; <span style="color:#ff6b6b;">ROȘU</span> setări &nbsp;·&nbsp; Return ascunde</div>
+</div>
+<script>
+// ---------------------------------------------------------------------------
+// Casa TV Agent (yet-another-samsung-tv-app): a Tizen app that reports
+// telemetry to a local "tv-reader" bridge, runs control/toast/cast commands, and
+// shows a simple lights dashboard. The bridge URL is configured at RUNTIME on the
+// TV (Setup screen -> localStorage) - nothing is hardcoded, so the same build runs
+// on any setup. Return backgrounds it (telemetry keeps running); RED opens Setup.
+// ---------------------------------------------------------------------------
+var BASE = (function(){ try { return localStorage.getItem("yas_bridge") || ""; } catch(e){ return ""; } })();
+var seq = 0, startedAt = Date.now(), sys = null, net = null, _started = false, _setup = false;
+var SCREEN_HTML = (document.getElementById("screen") || {}).outerHTML || "";
+
+// ---- lights dashboard ------------------------------------------------------
+var _lights = [], _sel = 0, _pollTimer = null;
+function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function renderLights(){
+  var el = document.getElementById("lights"); if(!el) return;
+  if(!_lights.length){ el.innerHTML = '<div style="opacity:.5;font-size:26px;">se încarcă luminile…</div>'; return; }
+  var h = "";
+  for(var i=0;i<_lights.length;i++){ var L=_lights[i];
+    h += '<div class="tile'+(L.on?" on":"")+(i===_sel?" sel":"")+(L.reachable?"":" unreach")+'">'
+       + '<div class="bulb"></div>'
+       + '<div class="nm">'+escapeHtml(L.name)+'</div>'
+       + '<div class="pct">'+(!L.reachable?"indisponibil":(L.on?(L.brightness!=null?L.brightness+"%":"aprins"):"stins"))+'</div>'
+       + '</div>';
+  }
+  el.innerHTML = h;
+}
+function loadLights(){
+  if(!BASE) return;
+  try{
+    var x=new XMLHttpRequest(); x.open("GET", BASE+"/v1/lights", true); x.timeout=8000;
+    x.onreadystatechange=function(){ if(x.readyState===4 && x.status===200){ try{ var r=JSON.parse(x.responseText);
+      if(r&&r.lights){ _lights=r.lights; if(_sel>=_lights.length) _sel=Math.max(0,_lights.length-1); renderLights(); } }catch(e){} } };
+    x.ontimeout=function(){}; x.onerror=function(){};
+    x.send();
+  }catch(e){}
+}
+function toggleSelected(){
+  var L=_lights[_sel]; if(!L || !L.reachable || !BASE) return;
+  L.on=!L.on; renderLights();  // optimistic
+  try{
+    var x=new XMLHttpRequest(); x.open("POST", BASE+"/v1/lights/toggle", true);
+    x.setRequestHeader("Content-Type","application/json");
+    x.onreadystatechange=function(){ if(x.readyState===4){ setTimeout(loadLights, 600); } };
+    x.send(JSON.stringify({entity_id:L.entity_id}));
+  }catch(e){}
+}
+function dashKey(code){
+  var cols = 3;
+  if(code===37){ if(_sel>0){_sel--; renderLights();} }                       // left
+  else if(code===39){ if(_sel<_lights.length-1){_sel++; renderLights();} }   // right
+  else if(code===38){ _sel=Math.max(0,_sel-cols); renderLights(); }          // up
+  else if(code===40){ _sel=Math.min(_lights.length-1,_sel+cols); renderLights(); } // down
+  else if(code===13){ toggleSelected(); }                                    // OK / enter
+}
+function startPoll(){ stopPoll(); _pollTimer=setInterval(loadLights, 5000); }
+function stopPoll(){ if(_pollTimer){ clearInterval(_pollTimer); _pollTimer=null; } }
+function showDashboard(){ _setup=false; try{ document.body.innerHTML = SCREEN_HTML; }catch(e){} renderLights(); loadLights(); startPoll(); }
+
+// ---- setup screen (runtime bridge config) ----------------------------------
+function setupStatus(msg){ var el=document.getElementById("bstat"); if(el) el.textContent=msg; }
+function showSetup(){
+  _setup = true; stopPoll();
+  var cur = BASE || "http://";
+  document.body.innerHTML =
+    '<div style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;'
+    + 'background:linear-gradient(160deg,#141427,#070709);color:#f3e9d6;font-family:sans-serif;padding:6vh;box-sizing:border-box;">'
+    + '<div style="font-size:54px;font-weight:800;color:#f1dfb6;margin-bottom:5vh;">🐾 Configurează bridge-ul</div>'
+    + '<input id="burl" value="'+escapeHtml(cur)+'" '
+    +   'style="width:62%;font-size:42px;padding:22px 30px;border-radius:18px;border:3px solid #e9c27a;'
+    +   'background:#15151f;color:#fff;text-align:center;outline:none;">'
+    + '<div id="bstat" style="margin-top:3.5vh;font-size:32px;min-height:44px;opacity:.85;"></div>'
+    + '<div style="margin-top:5vh;font-size:30px;opacity:.6;line-height:2.1;">'
+    +   '<b style="color:#6fd36f;">VERDE</b> testează &nbsp;·&nbsp; <b style="color:#e9c27a;">OK</b> salvează '
+    +   '&nbsp;·&nbsp; <b style="color:#f1dd5a;">GALBEN</b> caută &nbsp;·&nbsp; <b>RETURN</b> înapoi'
+    + '</div></div>';
+  var inp = document.getElementById("burl");
+  try{ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }catch(e){}
+}
+function _urlFromInput(){ var v=((document.getElementById("burl")||{}).value||"").trim(); return v.replace(/\/+$/,""); }
+function setupTest(){
+  var url=_urlFromInput();
+  if(!url){ setupStatus("introdu adresa (http://ip:8777)"); return; }
+  setupStatus("se testează…");
+  try{
+    var x=new XMLHttpRequest(); x.open("GET", url+"/v1/state", true); x.timeout=6000;
+    x.onreadystatechange=function(){ if(x.readyState===4){ setupStatus(x.status===200 ? "✓ conectat la bridge" : "✗ fără răspuns ("+x.status+")"); } };
+    x.ontimeout=function(){ setupStatus("✗ timeout - verifică adresa"); };
+    x.onerror=function(){ setupStatus("✗ eroare de rețea"); };
+    x.send();
+  }catch(e){ setupStatus("✗ "+(e&&e.message)); }
+}
+function setupSave(){
+  var url=_urlFromInput();
+  if(!/^https?:\/\/.+/.test(url)){ setupStatus("adresă invalidă - ex: http://192.168.1.10:8777"); return; }
+  BASE = url;
+  try{ localStorage.setItem("yas_bridge", url); }catch(e){}
+  startNormal();
+  showDashboard();
+}
+function setupDiscover(){
+  setupStatus("se caută bridge-ul în rețea… (poate dura)");
+  var gw = safe(function(){ return webapis.network.getGateway(); });
+  var pfx = (typeof gw==="string" && /^\d+\.\d+\.\d+\./.test(gw)) ? gw.slice(0, gw.lastIndexOf(".")+1) : "192.168.1.";
+  var found=false, done=0, total=254;
+  for(var i=1;i<=254;i++){ (function(ip){
+    var url="http://"+pfx+ip+":8777";
+    try{
+      var x=new XMLHttpRequest(); x.open("GET", url+"/v1/state", true); x.timeout=3500;
+      x.onreadystatechange=function(){ if(x.readyState===4){ done++;
+        if(!found && x.status===200){ found=true; var inp=document.getElementById("burl"); if(inp) inp.value=url; setupStatus("✓ găsit: "+url+"  — apasă OK pentru salvare"); }
+        else if(done>=total && !found){ setupStatus("✗ nu l-am găsit; introdu adresa manual"); } } };
+      x.ontimeout=function(){ done++; if(done>=total && !found) setupStatus("✗ nu l-am găsit; introdu adresa manual"); };
+      x.onerror=function(){ done++; };
+      x.send();
+    }catch(e){ done++; }
+  })(i); }
+}
+
+// ---- telemetry -------------------------------------------------------------
+function post(obj){
+  if(!BASE) return;
+  try{ var x=new XMLHttpRequest(); x.open("POST", BASE+"/v1/report", true);
+       x.setRequestHeader("Content-Type","application/json"); x.send(JSON.stringify(obj)); }catch(e){}
+}
+function safe(fn){ try{ return fn(); }catch(e){ return "err: "+(e&&e.message); } }
+function getChannel(){
+  try{ var c = tizen.tvchannel.getCurrentChannel();
+    return { name:c.channelName, number:(c.major!=null?String(c.major):"")+(c.minor?("-"+c.minor):""),
+             major:c.major, minor:c.minor, programNumber:c.programNumber,
+             serviceName:c.serviceName, serviceType:c.serviceType, lcn:c.lcn }; }
+  catch(e){ return { error: e&&(e.name+": "+e.message) }; }
+}
+function getProgram(){
+  try{ var p = tizen.tvchannel.getCurrentProgram(); if(!p) return null;
+       return { title:p.title, duration:p.duration }; }
+  catch(e){ return { error: e&&e.message }; }
+}
+function getAudio(){
+  return { volume: safe(function(){ return tizen.tvaudiocontrol.getVolume(); }),
+           mute:   safe(function(){ return tizen.tvaudiocontrol.isMute(); }),
+           output: safe(function(){ return tizen.tvaudiocontrol.getOutputMode(); }) };
+}
+function getInput(){
+  try{ var r = tizen.tvwindow.getSource();
+       if (r && r.type !== undefined) return { type:r.type, number:r.number }; }
+  catch(e){ return { error: e&&(e.name+": "+e.message) }; }
+  return null;
+}
+function getFg(){ return safe(function(){ return webapis.appcommon.getForegroundAppId(); }); }
+function getSystem(){
+  return { firmware: safe(function(){ return webapis.productinfo.getFirmware(); }),
+           model:    safe(function(){ return webapis.productinfo.getModel(); }),
+           realModel:safe(function(){ return webapis.productinfo.getRealModel(); }),
+           duid:     safe(function(){ return webapis.productinfo.getDuid(); }) };
+}
+function getNetwork(){
+  return { gateway: safe(function(){ return webapis.network.getGateway(); }),
+           connType:safe(function(){ return webapis.network.getActiveConnectionType(); }) };
+}
+function getSensors(){
+  return { totalMemMB:  safe(function(){ return Math.round(tizen.systeminfo.getTotalMemory()/1048576); }),
+           freeMemMB:   safe(function(){ return Math.round(tizen.systeminfo.getAvailableMemory()/1048576); }),
+           uptimeSec:   safe(function(){ return tizen.systeminfo.getDeviceUptime(); }),
+           ecoSensor:   safe(function(){ return webapis.avinfo.getEcoSensor(); }),
+           energySaving:safe(function(){ return webapis.avinfo.getEnergySaving(); }),
+           broadcastStd:safe(function(){ return tizen.tvchannel.getBroadcastStandard(); }) };
+}
+function snapshot(event){
+  var s = { source:"tv-agent", ts:new Date().toISOString(), seq:(++seq),
+            uptimeMs:(Date.now()-startedAt), event:event,
+            hidden:(typeof document.hidden!=="undefined"?document.hidden:null) };
+  s.channel=getChannel(); s.program=getProgram(); s.audio=getAudio(); s.input=getInput();
+  s.foregroundApp=getFg();
+  if (sys===null) sys=getSystem();
+  if (net===null) net=getNetwork();
+  s.system=sys; s.network=net; s.sensors=getSensors();
+  return s;
+}
+function report(event){ post(snapshot(event)); }
+function reportApps(){
+  try{
+    tizen.application.getAppsInfo(function(list){
+      var apps=[];
+      for(var i=0;i<list.length;i++){ try{ if(list[i].show){ apps.push({id:list[i].id, name:list[i].name}); } }catch(e){} }
+      post({source:"tv-agent", event:"apps", seq:(++seq), ts:new Date().toISOString(), apps:apps});
+    }, function(e){ post({source:"tv-agent-appserr", err:e&&(e.name+": "+e.message)}); });
+  }catch(e){ post({source:"tv-agent-appserr", err:"throw:"+(e&&e.message)}); }
+}
+
+// ---- lifecycle -------------------------------------------------------------
+function hideApp(){
+  stopPoll();
+  try{ tizen.application.getCurrentApplication().hide(); return; }catch(e){}
+  try{ tizen.application.getCurrentApplication().exit(); }catch(e){}
+}
+function guessKind(url){
+  if(/\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) return "image";
+  if(/\.(mp4|m4v|webm|mov|mkv|ts|m3u8)(\?|$)/i.test(url)) return "video";
+  return "web";
+}
+// Full-screen {message} OR {url,kind} for `duration` s, then back to the dashboard.
+function showContent(t){
+  stopPoll();
+  var dur = (t && t.duration) ? parseInt(t.duration,10) : 10;
+  if(t && t.url){
+    var kind = t.kind || guessKind(t.url), u = String(t.url), inner;
+    if(kind==="image")      inner = '<img src="'+u+'" style="max-width:100%;max-height:100%;object-fit:contain;">';
+    else if(kind==="video") inner = '<video src="'+u+'" autoplay style="width:100%;height:100%;object-fit:contain;"></video>';
+    else                    inner = '<iframe src="'+u+'" style="border:0;width:100%;height:100%;"></iframe>';
+    document.body.innerHTML = '<div style="position:fixed;inset:0;background:#000;display:flex;align-items:center;justify-content:center;">'+inner+'</div>';
+    if(kind==="video"){ try{ document.querySelector("video").onended=function(){ endContent(); }; }catch(e){} }
+  } else {
+    document.body.innerHTML = '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#06080f;color:#fff;font-family:sans-serif;text-align:center;padding:5%;box-sizing:border-box;">'
+      + '<div style="font-size:72px;font-weight:800;line-height:1.3;">' + escapeHtml((t&&t.message)||"") + '</div></div>';
+  }
+  if(!dur || dur<1) dur=10;
+  setTimeout(endContent, dur*1000);
+  if(!_started) startNormal();
+}
+function endContent(){ hideApp(); try{ document.body.innerHTML = SCREEN_HTML; }catch(e){} }
+function checkToast(cb){
+  if(!BASE){ cb(null); return; }
+  try{
+    var x=new XMLHttpRequest(); x.open("GET", BASE+"/v1/toast", true); x.timeout=6000;
+    x.onreadystatechange=function(){ if(x.readyState===4){ var t=null; try{ t=JSON.parse(x.responseText); }catch(e){} cb(t); } };
+    x.ontimeout=function(){ cb(null); }; x.onerror=function(){ cb(null); };
+    x.send();
+  }catch(e){ cb(null); }
+}
+// On becoming visible: no bridge -> Setup; a queued toast/cast takes over; else dashboard.
+function onForeground(){
+  if(!BASE){ showSetup(); return; }
+  checkToast(function(t){ if(t && (t.message||t.url)){ showContent(t); } else { showDashboard(); } });
+}
+
+// ---- control command channel ----------------------------------------------
+function execCommand(c){
+  var a = c && c.action;
+  try{
+    if(a==="volume_up"){ tizen.tvaudiocontrol.setVolumeUp(); }
+    else if(a==="volume_down"){ tizen.tvaudiocontrol.setVolumeDown(); }
+    else if(a==="set_volume"){ tizen.tvaudiocontrol.setVolume(parseInt(c.value,10)); }
+    else if(a==="mute"){ tizen.tvaudiocontrol.setMute(!tizen.tvaudiocontrol.isMute()); }
+    else if(a==="channel_up" || a==="channel_down" || a==="tune_channel"){ changeChannel(a, c); return; }
+    else if(a==="notify"){ try{ tizen.application.launch(tizen.application.getCurrentApplication().appInfo.id, function(){}, function(e){}); }catch(e){} return; }
+    else if(a==="hide"){ hideApp(); return; }
+    else if(a==="launch_app"){ try{ tizen.application.launch(c.app_id, function(){ report("cmd:launch_app"); }, function(e){ post({source:"tv-agent-cmderr",action:a,err:e&&(e.name+": "+e.message)}); }); }catch(e){ post({source:"tv-agent-cmderr",action:a,err:"throw:"+(e&&e.message)}); } return; }
+    else { return; }
+    report("cmd:"+a);
+  }catch(e){ post({source:"tv-agent-cmderr", action:a, err:e&&(e.name+": "+e.message)}); }
+}
+function changeChannel(a, c){
+  try{
+    tizen.tvchannel.getChannelList(function(list){
+      if(!list || !list.length){ post({source:"tv-agent-cmderr",action:a,err:"empty channel list"}); return; }
+      var cur=null; try{ cur=tizen.tvchannel.getCurrentChannel(); }catch(e){}
+      var idx=-1;
+      if(cur){ for(var i=0;i<list.length;i++){ if(list[i].major===cur.major && list[i].minor===cur.minor){ idx=i; break; } } }
+      var target=null;
+      if(a==="tune_channel"){
+        var num=parseInt(c.number,10);
+        for(var j=0;j<list.length;j++){ if(list[j].major===num){ target=list[j]; break; } }
+        if(!target){ post({source:"tv-agent-cmderr",action:a,err:"channel "+num+" not found"}); return; }
+      } else {
+        if(idx<0) idx=0;
+        target = list[(a==="channel_up")?(idx+1)%list.length:(idx-1+list.length)%list.length];
+      }
+      try{ webapis.broadcast.tuneDirect(target, function(){ report("cmd:"+a); },
+             function(e){ post({source:"tv-agent-cmderr",action:a,phase:"tuneDirect",err:e&&e.message}); }); }
+      catch(e){ post({source:"tv-agent-cmderr",action:a,phase:"tuneDirect-throw",err:e&&e.message}); }
+    }, function(e){ post({source:"tv-agent-cmderr",action:a,phase:"getChannelList",err:e&&e.message}); });
+  }catch(e){ post({source:"tv-agent-cmderr",action:a,err:e&&e.message}); }
+}
+function pollCommands(){
+  if(!BASE) return;
+  try{
+    var x = new XMLHttpRequest();
+    x.open("GET", BASE+"/v1/commands", true); x.timeout = 30000;
+    x.onreadystatechange = function(){
+      if(x.readyState===4){
+        if(x.status===200){ try{ var r=JSON.parse(x.responseText), cs=(r&&r.commands)||[]; for(var i=0;i<cs.length;i++) execCommand(cs[i]); }catch(e){} }
+        setTimeout(pollCommands, 150);
+      }
+    };
+    x.ontimeout = function(){ setTimeout(pollCommands, 150); };
+    x.onerror = function(){ setTimeout(pollCommands, 1000); };
+    x.send();
+  }catch(e){ setTimeout(pollCommands, 1000); }
+}
+
+// ---- keys (active always, incl. during Setup) ------------------------------
+function registerKeys(){
+  ["Back","ColorF0Red","ColorF1Green","ColorF2Yellow","ColorF3Blue"].forEach(function(k){
+    try{ tizen.tvinputdevice.registerKey(k); }catch(e){}
+  });
+}
+function onKey(e){
+  var k = e.keyCode;
+  if(_setup){
+    if(k===13){ setupSave(); }            // OK -> save
+    else if(k===404){ setupTest(); }      // GREEN -> test
+    else if(k===405){ setupDiscover(); }  // YELLOW -> discover
+    else if(k===10009 || k===461){ if(BASE){ showDashboard(); } }  // Return -> back (only if configured)
+    return;
+  }
+  if(k===403){ showSetup(); return; }                 // RED -> settings
+  if(k===10009 || k===461){ hideApp(); return; }      // Back/Return -> background
+  dashKey(k);
+}
+
+// ---- TV listeners + telemetry loops ----------------------------------------
+function registerTvListeners(){
+  try{ tizen.tvchannel.addChannelChangeListener(function(){ report("channel"); }); }catch(e){}
+  try{ tizen.tvchannel.addProgramChangeListener(function(){ report("program"); }); }catch(e){}
+  try{ tizen.tvaudiocontrol.setVolumeChangeListener(function(){ report("volume"); }); }catch(e){}
+}
+function startNormal(){
+  if(_started || !BASE) return;
+  _started = true;
+  registerTvListeners();
+  report("init");
+  reportApps();
+  pollCommands();
+  setInterval(function(){ report("heartbeat"); }, 20000);
+}
+
+// ---- startup ---------------------------------------------------------------
+registerKeys();
+try{ document.addEventListener("keydown", onKey); }catch(e){}
+try{ document.addEventListener("visibilitychange", function(){ if(_started) report("visibility"); if(document.hidden){ stopPoll(); } else { onForeground(); } }); }catch(e){}
+
+function boot(){
+  if(!BASE){ showSetup(); return; }   // first run / unconfigured -> Setup screen
+  // Configured: a queued toast/cast takes over; otherwise the bridge's launch-mode
+  // decides - watchdog sets "background" (silent) on power-on; a manual open is "foreground".
+  checkToast(function(t){
+    if(t && (t.message||t.url)){ showContent(t); }
+    else { startByMode(); }
+  });
+}
+function startByMode(){
+  var x=new XMLHttpRequest();
+  function go(mode){ startNormal(); if(mode==="background"){ hideApp(); } else { showDashboard(); } }
+  try{
+    x.open("GET", BASE+"/v1/launchmode", true); x.timeout=5000;
+    x.onreadystatechange=function(){ if(x.readyState===4){ var m="foreground"; try{ m=(JSON.parse(x.responseText)||{}).mode||"foreground"; }catch(e){} go(m); } };
+    x.ontimeout=function(){ go("foreground"); };
+    x.onerror=function(){ go("foreground"); };
+    x.send();
+  }catch(e){ go("foreground"); }
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to cert.json and fill in. Values are base64 of your Tizen .p12 certificates (binary DER). See sign/README.md.",
+  "authorCert": "BASE64_OF_AUTHOR_P12_DER",
+  "distributorCert": "BASE64_OF_DISTRIBUTOR_P12_DER",
+  "password": "YOUR_P12_PASSWORD"
+}
