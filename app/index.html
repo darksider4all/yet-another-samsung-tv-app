@@ -223,6 +223,36 @@ function getSensors(){
            energySaving:safe(function(){ return webapis.avinfo.getEnergySaving(); }),
            broadcastStd:safe(function(){ return tizen.tvchannel.getBroadcastStandard(); }) };
 }
+
+// --- sensor dig (2026-10-25) -------------------------------------------------
+// Measured on this set: tizen.systeminfo.getPropertyValue is CALLBACK-ONLY — every
+// synchronous call throws TypeMismatchError — and webapis.avinfo.getBrightness is
+// SecurityError without a declared privilege. So the probe is async, and brightness
+// is sampled on a timer because with the eco sensor ON it follows the room light.
+var PROBE = null, BRIGHT = null, PROBE_DONE = false;
+var SI_NAMES = ['DISPLAY','STORAGE','CPU','WIFI_NETWORK','NETWORK','PERIPHERAL','BUILD','BATTERY','ETHERNET_NETWORK'];
+
+
+function probeSensors(done){
+  var out = {}, i = 0;
+  function next(){
+    if (i >= SI_NAMES.length) { done(out); return; }
+    var n = SI_NAMES[i++];
+    try {
+      tizen.systeminfo.getPropertyValue(n,
+        function(v){ out['si.' + n] = v; next(); },
+        function(e){ out['si.' + n] = 'err:' + ((e && e.name) || e); next(); });
+    } catch (e) { out['si.' + n] = 'throw:' + (e && e.name); next(); }
+  }
+  next();
+}
+function refreshBrightness(){
+  try {
+    tizen.systeminfo.getPropertyValue('DISPLAY',
+      function(v){ if (v && typeof v.brightness !== 'undefined') BRIGHT = v.brightness; },
+      function(){});
+  } catch (e) {}
+}
 function snapshot(event){
   var s = { source:"tv-agent", ts:new Date().toISOString(), seq:(++seq),
             uptimeMs:(Date.now()-startedAt), event:event,
@@ -232,9 +262,14 @@ function snapshot(event){
   if (sys===null) sys=getSystem();
   if (net===null) net=getNetwork();
   s.system=sys; s.network=net; s.sensors=getSensors();
+  s.probe=PROBE; s.brightness=BRIGHT;
   return s;
 }
 function report(event){ post(snapshot(event)); }
+function startProbe(){
+  probeSensors(function(o){ PROBE=o; PROBE_DONE=true; report('probe'); });
+  refreshBrightness(); setInterval(refreshBrightness, 30000);
+}
 function reportApps(){
   try{
     tizen.application.getAppsInfo(function(list){
@@ -385,6 +420,7 @@ function startNormal(){
   _started = true;
   registerTvListeners();
   report("init");
+  try{ startProbe(); }catch(e){}
   reportApps();
   pollCommands();
   setInterval(function(){ report("heartbeat"); }, 20000);
