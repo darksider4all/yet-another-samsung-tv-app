@@ -341,7 +341,11 @@ function execCommand(c){
     if(a==="volume_up"){ tizen.tvaudiocontrol.setVolumeUp(); }
     else if(a==="volume_down"){ tizen.tvaudiocontrol.setVolumeDown(); }
     else if(a==="set_volume"){ tizen.tvaudiocontrol.setVolume(parseInt(c.value,10)); }
-    else if(a==="mute"){ tizen.tvaudiocontrol.setMute(!tizen.tvaudiocontrol.isMute()); }
+    // Mute is directed, not a toggle: the bridge rejects a payload without a boolean
+    // 'value' (AGENT_ACTION_ARGS in the ha-integration repo), so a toggle here made
+    // mute one-way — value:true on an already-muted set would unmute it. The toggle is
+    // kept only for an older bridge/HA that sends no value.
+    else if(a==="mute"){ tizen.tvaudiocontrol.setMute(typeof c.value === "boolean" ? c.value : !tizen.tvaudiocontrol.isMute()); }
     else if(a==="channel_up" || a==="channel_down" || a==="tune_channel"){ changeChannel(a, c); return; }
     else if(a==="notify"){ try{ tizen.application.launch(tizen.application.getCurrentApplication().appInfo.id, function(){}, function(e){}); }catch(e){} return; }
     else if(a==="hide"){ hideApp(); return; }
